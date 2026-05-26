@@ -1,11 +1,12 @@
 import ccxt
 import json
 import os
+import sys # Added sys for stderr output
 
 def get_binance_ohlcv(symbol, timeframe='1d', limit=30):
+
+
     exchange = ccxt.binanceus({
-        'apiKey': os.environ.get('BINANCE_API_KEY'),
-        'secret': os.environ.get('BINANCE_SECRET_KEY'),
         'enableRateLimit': True,
     })
     try:
@@ -24,21 +25,35 @@ def get_binance_ohlcv(symbol, timeframe='1d', limit=30):
             })
         return formatted_ohlcv
     except ccxt.NetworkError as e:
-        print(f"Network error: {e}")
+        print(f"Network error: {e}", file=sys.stderr)
         return None
     except ccxt.ExchangeError as e:
-        print(f"Exchange error: {e}")
+        print(f"Exchange error: {e}", file=sys.stderr)
         return None
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        print(f"An unexpected error occurred: {e}", file=sys.stderr)
         return None
 
 def get_all_binance_ohlcv_data():
+
+
     exchange = ccxt.binanceus({
         'enableRateLimit': True,
     })
-    markets = exchange.load_markets()
-    symbols = [s for s in exchange.symbols if s.endswith('/USDT') and not any(ext in s for ext in ['UP', 'DOWN', 'BULL', 'BEAR'])]
+    
+    try:
+        markets = exchange.load_markets()
+        symbols = [s for s in exchange.symbols if s.endswith('/USDT') and not any(ext in s for ext in ['UP', 'DOWN', 'BULL', 'BEAR'])]
+    except ccxt.NetworkError as e:
+        print(f"Network error loading markets: {e}", file=sys.stderr)
+        return {}
+    except ccxt.ExchangeError as e:
+        print(f"Exchange error loading markets: {e}", file=sys.stderr)
+        return {}
+    except Exception as e:
+        print(f"An unexpected error occurred loading markets: {e}", file=sys.stderr)
+        return {}
+
 
     all_ohlcv_data = {}
     for symbol in symbols:
