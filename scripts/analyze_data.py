@@ -216,6 +216,37 @@ def analyze_accumulation(df):
     
     return False
 
+def is_missed_shooting_coin(df, is_shooting_flag, shooting_reasons):
+    missed_reasons = []
+
+    if is_shooting_flag: # If it's already a shooting coin, it can't be a missed one
+        return False, missed_reasons, 0.0
+
+    if len(df) < 7: # Need at least 7 days of data for 7-day surge
+        return False, missed_reasons, 0.0
+
+    # Calculate 7-day price surge
+    price_7_days_ago = df['close'].iloc[-7]
+    current_price = df['close'].iloc[-1]
+
+    if price_7_days_ago == 0: # Avoid division by zero
+        return False, missed_reasons, 0.0
+
+    surge_percentage = ((current_price - price_7_days_ago) / price_7_days_ago) * 100
+
+    if surge_percentage >= 30: # Check for at least 30% surge
+        missed_reasons.append(f"Price surged by {surge_percentage:.2f}% over 7 days.")
+        # Initial analysis on why it might have been missed by is_shooting_coin
+        # This part requires inspecting the shooting_reasons to see what's missing.
+        # For now, we'll just indicate it was a surge not caught by the specific shooting coin logic.
+        if not shooting_reasons:
+            missed_reasons.append("Original 'is_shooting_coin' function found no specific technical patterns or indicator signals.")
+        else:
+            missed_reasons.append(f"Original 'is_shooting_coin' function found reasons: {', '.join(shooting_reasons)}")
+        return True, missed_reasons, surge_percentage
+
+    return False, missed_reasons, 0.0
+
 def is_shooting_coin(df):
     reasons = []
 
@@ -257,6 +288,7 @@ def is_shooting_coin(df):
 
 def analyze_data(ohlcv_data):
     shooting_coins = []
+    missed_shooting_coins = [] # New list for missed shooting coins
     for coin, data in ohlcv_data.items():
         df = pd.DataFrame(data)
         if df.empty: # Skip empty dataframes
@@ -293,7 +325,16 @@ def analyze_data(ohlcv_data):
                 'current_price': df.iloc[-1]['close'],
                 'reasons': reasons
             })
-    return shooting_coins
+        else: # Only check for missed if it's not a shooting coin
+            is_missed, missed_reasons, surge_percentage = is_missed_shooting_coin(df, is_shooting, reasons)
+            if is_missed:
+                missed_shooting_coins.append({
+                    'coin': coin,
+                    'current_price': df.iloc[-1]['close'],
+                    'surge_percentage': surge_percentage,
+                    'missed_reasons': missed_reasons
+                })
+    return {"shooting_coins": shooting_coins, "missed_shooting_coins": missed_shooting_coins}
 
 if __name__ == "__main__":
     # Read OHLCV data from stdin
