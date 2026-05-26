@@ -3,6 +3,7 @@ import datetime
 import os
 import sys
 
+
 # Assuming default_api is available in the execution environment of this script
 # when run as a cron job by the Hermes Agent.
 # If not, this script would need to be executed in a context where default_api is injected.
@@ -11,7 +12,9 @@ PROJECT_ROOT = "/home/ivjiyeonb/projects/altcoin_discovery"
 VENV_PYTHON = os.path.join(PROJECT_ROOT, ".venv/bin/python")
 GET_BINANCE_DATA_SCRIPT = os.path.join(PROJECT_ROOT, "scripts/get_binance_data_ccxt.py")
 ANALYZE_DATA_SCRIPT = os.path.join(PROJECT_ROOT, "scripts/analyze_data.py")
-RECOMMENDATION_HISTORY_FILE = os.path.join(PROJECT_ROOT, "recommendation_history.json")
+RECOMMENDATION_HISTORY_FILE = os.path.join(PROJECT_ROOT, "data/recommendation_history.json")
+
+
 
 def run_cron_job():
     today = datetime.date.today()
@@ -137,6 +140,7 @@ def run_cron_job():
 
     discord_report = "\n".join(report_lines)
     print(discord_report)
+
 
     # 6. Save updated recommendation history
     default_api.write_file(RECOMMENDATION_HISTORY_FILE, json.dumps(recommendation_history, indent=4, ensure_ascii=False))
