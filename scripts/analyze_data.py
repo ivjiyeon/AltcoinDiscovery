@@ -2,74 +2,218 @@ import json
 import sys
 import pandas as pd
 import ta
+from scipy.signal import find_peaks
+
+def _find_peaks_troughs(prices, order=5):
+    # Find peaks
+    peaks, _ = find_peaks(prices, order=order)
+    # Find troughs (inverted peaks)
+    troughs, _ = find_peaks(-prices, order=order)
+    return peaks, troughs
+
+def _detect_pattern_breakout(df, entry_price, breakout_threshold_percent=0.01):
+    # Check if the last close price broke above/below a certain level
+    # with increased volume.
+    last_close = df['close'].iloc[-1]
+    last_volume = df['volume'].iloc[-1]
+    prev_volume = df['volume'].iloc[-2]
+
+    if breakout_threshold_percent > 0: # Bullish breakout
+        if last_close > entry_price * (1 + breakout_threshold_percent) and last_volume > prev_volume * 1.2:
+            return True
+    elif breakout_threshold_percent < 0: # Bearish breakout
+        if last_close < entry_price * (1 + breakout_threshold_percent) and last_volume > prev_volume * 1.2:
+            return True
+    return False
 
 def find_head_and_shoulders(df):
-    # Simplified Inverse Head and Shoulders (bullish) pattern detection.
-    # Requires sufficient data points.
-    if len(df) < 15: # Need at least 15 candles for a plausible pattern
+    # Advanced Inverse Head and Shoulders (bullish) pattern detection.
+    # An Inverse Head and Shoulders is a bullish reversal pattern.
+    # We look for three troughs with the middle one (head) being the lowest,
+    # and two peaks (shoulders) at roughly similar levels.
+    # A breakout above the neckline confirms the pattern.
+
+    if len(df) < 60: # Need sufficient data for a robust pattern
         return False
 
-    # Look for three troughs (LSH, H, RSH) and two peaks (between LSH-H and H-RSH)
-    # This is a very basic heuristic and not a robust financial pattern detection.
-    # A more advanced implementation would use peak/trough detection algorithms and neckline validation.
+    prices = df['close'].values
+    peaks, troughs = _find_peaks_troughs(prices, order=5) # Adjust order based on desired sensitivity
 
-    # For simplicity, let's look for a general shape in recent data
-    # This is highly simplified and illustrative.
-    recent_closes = df['close'].iloc[-15:].reset_index(drop=True)
+    # Filter for recent troughs and peaks
+    recent_troughs = [t for t in troughs if t > len(df) - 60]
+    recent_peaks = [p for p in peaks if p > len(df) - 60]
 
-    # Example heuristic: a dip, then a deeper dip, then a shallower dip
-    # followed by a breakout. This is NOT a precise H&S detection.
-    # This part would need significant development for real-world use.
-    # For now, let's return False to avoid false positives with this placeholder.
+    if len(recent_troughs) < 3 or len(recent_peaks) < 2:
+        return False
+
+    # Look for Left Shoulder, Head, Right Shoulder (troughs)
+    # and two intermediate peaks
+    # This is a simplified search and assumes a clear sequence.
+    # A more robust solution would iterate through combinations.
+    
+    # Try to find a Head (lowest trough)
+    head_idx = -1
+    for i in recent_troughs:
+        if head_idx == -1 or prices[i] < prices[head_idx]:
+            head_idx = i
+            
+    if head_idx == -1: return False
+            
+    # Find potential left shoulder (trough before head) and right shoulder (trough after head)
+    left_shoulder_candidates = [t for t in recent_troughs if t < head_idx and t > head_idx - 30]
+    right_shoulder_candidates = [t for t in recent_troughs if t > head_idx and t < head_idx + 30]
+
+    if not left_shoulder_candidates or not right_shoulder_candidates:
+        return False
+
+    # Take the closest troughs as shoulders for simplicity
+    ls_idx = max(left_shoulder_candidates)
+    rs_idx = min(right_shoulder_candidates)
+    
+    # Validate shoulder and head relationships
+    # Head should be the lowest
+    if not (prices[ls_idx] > prices[head_idx] < prices[rs_idx]):
+        return False
+        
+    # Shoulders should be at roughly similar levels
+    if abs(prices[ls_idx] - prices[rs_idx]) / prices[ls_idx] > 0.05: # 5% tolerance
+        return False
+
+    # Find the peaks (neckline points) between LS-Head and Head-RS
+    peak1_candidates = [p for p in recent_peaks if ls_idx < p < head_idx]
+    peak2_candidates = [p for p in recent_peaks if head_idx < p < rs_idx]
+
+    if not peak1_candidates or not peak2_candidates:
+        return False
+
+    peak1_idx = max(peak1_candidates)
+    peak2_idx = min(peak2_candidates)
+
+    # Neckline: average of the two peaks
+    neckline_price = (prices[peak1_idx] + prices[peak2_idx]) / 2
+
+    # Check for breakout above neckline
+    # Also ensure the breakout happens recently and with increased volume
+    if df['close'].iloc[-1] > neckline_price and _detect_pattern_breakout(df, neckline_price):
+        return True
+
     return False
 
 def find_double_bottom_top(df, pattern_type='bottom'):
-    # Simplified Double Bottom (bullish) pattern detection.
-    # Requires sufficient data points.
-    if len(df) < 20: # Need at least 20 candles for a plausible pattern
+    # Advanced Double Bottom/Top pattern detection.
+    # A Double Bottom is a bullish reversal pattern.
+    # A Double Top is a bearish reversal pattern.
+
+    if len(df) < 60: # Need sufficient data for a robust pattern
         return False
 
-    if pattern_type == 'bottom':
-        # Look for two distinct troughs at similar levels, separated by a peak.
-        # This is a very basic heuristic and not a robust financial pattern detection.
-        # A more advanced implementation would use peak/trough detection algorithms and neckline validation.
+    prices = df['close'].values
+    peaks, troughs = _find_peaks_troughs(prices, order=5)
 
-        recent_lows = df['low'].iloc[-20:]
-        # Find potential first bottom (B1)
-        b1_idx = recent_lows.nsmallest(2).index[0] # Smallest low
-        # Find potential second bottom (B2)
-        b2_idx = recent_lows.nsmallest(2).index[1] # Second smallest low
-        
-        # Ensure B1 and B2 are somewhat separated in time and price
-        if abs(b1_idx - b2_idx) > 3 and abs(recent_lows.loc[b1_idx] - recent_lows.loc[b2_idx]) / recent_lows.loc[b1_idx] < 0.03: # Within 3%
-            # Check for an intermediate peak between B1 and B2
-            start_idx = min(b1_idx, b2_idx)
-            end_idx = max(b1_idx, b2_idx)
-            intermediate_peak = df['high'].iloc[start_idx:end_idx].max()
-            
-            if intermediate_peak > recent_lows.loc[start_idx] * 1.05: # Intermediate peak is at least 5% higher than bottoms
-                # Now check for a breakout above the intermediate peak level (neckline)
-                if df['close'].iloc[-1] > intermediate_peak:
+    # Filter for recent troughs and peaks
+    recent_troughs = [t for t in troughs if t > len(df) - 60]
+    recent_peaks = [p for p in peaks if p > len(df) - 60]
+
+    if pattern_type == 'bottom':
+        if len(recent_troughs) < 2 or len(recent_peaks) < 1:
+            return False
+
+        # Look for two recent troughs (B1, B2) and an intermediate peak
+        # Iterate through combinations to find valid patterns
+        for i in range(len(recent_troughs) - 1):
+            b1_idx = recent_troughs[i]
+            for j in range(i + 1, len(recent_troughs)):
+                b2_idx = recent_troughs[j]
+
+                if b2_idx - b1_idx < 10: # Ensure sufficient separation between bottoms
+                    continue
+
+                # Check if bottoms are at similar price levels
+                if abs(prices[b1_idx] - prices[b2_idx]) / prices[b1_idx] > 0.03: # 3% tolerance
+                    continue
+
+                # Find intermediate peak
+                intermediate_peaks_between = [p for p in recent_peaks if b1_idx < p < b2_idx]
+                if not intermediate_peaks_between:
+                    continue
+                
+                intermediate_peak_idx = intermediate_peaks_between[0] # Take the first for simplicity
+                # Ensure intermediate peak is significantly higher than bottoms
+                if prices[intermediate_peak_idx] < prices[b1_idx] * 1.05: # At least 5% higher
+                    continue
+
+                # Neckline is the intermediate peak price
+                neckline_price = prices[intermediate_peak_idx]
+
+                # Check for breakout above neckline
+                if df['close'].iloc[-1] > neckline_price and _detect_pattern_breakout(df, neckline_price):
                     return True
+
+    elif pattern_type == 'top': # Double Top
+        if len(recent_peaks) < 2 or len(recent_troughs) < 1:
+            return False
+
+        # Look for two recent peaks (T1, T2) and an intermediate trough
+        for i in range(len(recent_peaks) - 1):
+            t1_idx = recent_peaks[i]
+            for j in range(i + 1, len(recent_peaks)):
+                t2_idx = recent_peaks[j]
+
+                if t2_idx - t1_idx < 10: # Ensure sufficient separation
+                    continue
+
+                # Check if tops are at similar price levels
+                if abs(prices[t1_idx] - prices[t2_idx]) / prices[t1_idx] > 0.03: # 3% tolerance
+                    continue
+
+                # Find intermediate trough
+                intermediate_troughs_between = [t for t in recent_troughs if t1_idx < t < t2_idx]
+                if not intermediate_troughs_between:
+                    continue
+
+                intermediate_trough_idx = intermediate_troughs_between[0]
+                # Ensure intermediate trough is significantly lower than tops
+                if prices[intermediate_trough_idx] > prices[t1_idx] * 0.95: # At least 5% lower
+                    continue
+
+                # Neckline is the intermediate trough price
+                neckline_price = prices[intermediate_trough_idx]
+
+                # Check for breakout below neckline
+                if df['close'].iloc[-1] < neckline_price and _detect_pattern_breakout(df, neckline_price, breakout_threshold_percent=-0.01): # Negative for breakdown
+                    return True
+
     return False
 
 def analyze_accumulation(df):
-    # Simplified Volume Accumulation detection using On-Balance Volume (OBV).
-    # OBV is a momentum indicator that relates volume changes to price changes.
-    # A rising OBV indicates that volume is flowing into an asset, suggesting accumulation.
-    if len(df) < 20: # Need sufficient data for OBV
+    # Advanced Volume Accumulation detection using CMF and VPT.
+    # Chaikin Money Flow (CMF) measures the amount of Money Flow Volume over a specific period.
+    # Volume Price Trend (VPT) is a momentum indicator that relates volume changes to price changes.
+    if len(df) < 30: # Need sufficient data for CMF and VPT
         return False
 
-    df['obv'] = ta.volume.OnBalanceVolumeIndicator(close=df['close'], volume=df['volume'], fillna=True).on_balance_volume()
+    # CMF analysis: Look for positive CMF indicating buying pressure
+    # and/or a rising trend in CMF.
+    recent_cmf = df['cmf'].iloc[-10:]
+    cmf_threshold = 0.1 # A common threshold for CMF
 
-    # Check if OBV is trending upwards recently
-    # This is a basic check. A more advanced check would look for divergence, etc.
-    recent_obv = df['obv'].iloc[-10:]
-    if len(recent_obv) > 1 and recent_obv.iloc[-1] > recent_obv.iloc[0]:
-        # Check if price is also generally moving upwards or consolidating
-        recent_closes = df['close'].iloc[-10:]
-        if recent_closes.iloc[-1] > recent_closes.iloc[0] * 0.98: # Price moved up at least 2% or stayed flat
-            return True
+    cmf_condition = False
+    if recent_cmf.iloc[-1] > cmf_threshold and recent_cmf.iloc[-1] > recent_cmf.iloc[-5]: # Current CMF is positive and rising
+        cmf_condition = True
+
+    # VPT analysis: Look for a rising VPT, indicating accumulation alongside price increases.
+    recent_vpt = df['vpt'].iloc[-10:]
+    vpt_condition = False
+    if len(recent_vpt) > 1 and recent_vpt.iloc[-1] > recent_vpt.iloc[-5]: # VPT is trending upwards
+        vpt_condition = True
+
+    # Combine conditions: at least one volume indicator should be bullish, 
+    # and price should not be significantly declining.
+    price_condition = df['close'].iloc[-1] > df['close'].iloc[-10] * 0.98 # Price moved up at least 2% or stayed flat over 10 periods
+
+    if (cmf_condition or vpt_condition) and price_condition:
+        return True
+    
     return False
 
 def is_shooting_coin(df):
@@ -135,6 +279,10 @@ def analyze_data(ohlcv_data):
         df['ichimoku_conversion'] = ta.trend.IchimokuIndicator(high=df['high'], low=df['low'], close=df['close'], window1=9, window2=26, window3=52, fillna=True).ichimoku_conversion_line()
         df['ichimoku_a'] = ta.trend.IchimokuIndicator(high=df['high'], low=df['low'], close=df['close'], window1=9, window2=26, window3=52, fillna=True).ichimoku_a()
         df['ichimoku_b'] = ta.trend.IchimokuIndicator(high=df['high'], low=df['low'], close=df['close'], window1=9, window2=26, window3=52, fillna=True).ichimoku_b()
+        
+        # Advanced Volume Indicators
+        df['vpt'] = ta.volume.VolumePriceTrend(close=df['close'], volume=df['volume'], fillna=True).volume_price_trend()
+        df['cmf'] = ta.volume.ChaikinMoneyFlowIndicator(high=df['high'], low=df['low'], close=df['close'], volume=df['volume'], window=20, fillna=True).chaikin_money_flow()
 
         # Advanced analysis using indicators and patterns
         is_shooting, reasons = is_shooting_coin(df)
